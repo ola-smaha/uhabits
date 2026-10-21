@@ -46,9 +46,10 @@ and signature.
 
 ## Installing
 
-1. Download the latest APK from the
-   [releases page](https://github.com/ola-smaha/uhabits/releases/latest) on each device and
-   install it. The same APK works on phones and tablets.
+1. Install the signed APK on each device. The same APK works on phones and tablets.
+   Once the signing secrets below are set, every push to `dev` publishes a signed APK on the
+   [releases page](https://github.com/ola-smaha/uhabits/releases/latest). Without them, CI
+   publishes unsigned pre-releases, which must be signed with the release key before installing.
 2. To bring over your existing data, open the original Loop app on the device that has it,
    go to **Settings > Export full backup**, then open Loop Sync and use
    **Settings > Import data** with that file. Do this on one device only.
