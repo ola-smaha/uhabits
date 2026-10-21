@@ -58,8 +58,14 @@ object GoogleDriveAuth {
      */
     fun getTokenSilently(context: Context): String? {
         val result = await(Identity.getAuthorizationClient(context).authorize(request()))
-        if (result.hasResolution()) return null
+        if (result.hasResolution() || !hasDriveAccess(result)) return null
         return result.accessToken
+    }
+
+    /** True if the user granted access to the app folder in Google Drive. */
+    fun hasDriveAccess(result: AuthorizationResult): Boolean {
+        return result.accessToken != null &&
+            result.grantedScopes.any { it.toString() == DRIVE_APPDATA_SCOPE }
     }
 
     /** Forgets a cached token that Google rejected, so the next request gets a fresh one. */

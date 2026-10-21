@@ -228,8 +228,10 @@ class SettingsFragment : PreferenceFragmentCompat(), OnSharedPreferenceChangeLis
                     authorizationLauncher.launch(
                         IntentSenderRequest.Builder(pendingIntent.intentSender).build()
                     )
-                } else {
+                } else if (GoogleDriveAuth.hasDriveAccess(result)) {
                     onAuthorized()
+                } else {
+                    showToast(getString(R.string.sync_scope_not_granted))
                 }
             }
             .addOnFailureListener { e ->
@@ -246,8 +248,8 @@ class SettingsFragment : PreferenceFragmentCompat(), OnSharedPreferenceChangeLis
         try {
             val result = Identity.getAuthorizationClient(requireActivity())
                 .getAuthorizationResultFromIntent(data)
-            if (result.accessToken == null) {
-                showToast(getString(R.string.sync_cancelled))
+            if (!GoogleDriveAuth.hasDriveAccess(result)) {
+                showToast(getString(R.string.sync_scope_not_granted))
                 return
             }
             onAuthorized()

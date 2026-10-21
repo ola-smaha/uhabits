@@ -177,7 +177,9 @@ class SyncManager(
         } catch (e: DriveAppDataClient.UnauthorizedException) {
             needsAuth()
         } catch (e: DriveAppDataClient.DriveException) {
-            val retryable = e.code == 429 || e.code >= 500 || RATE_LIMIT_REASONS.contains(e.reason ?: "")
+            // The user may have unchecked Drive access on Google's consent screen.
+            if (e.code == 403 && e.reason in SCOPE_REASONS) return needsAuth()
+            val retryable = e.code == 429 || e.code >= 500 || e.reason in RATE_LIMIT_REASONS
             failed(e.message ?: "HTTP ${e.code}", retryable)
         } catch (e: SyncException) {
             failed(e.message ?: "", retryable = false)
@@ -389,6 +391,7 @@ class SyncManager(
         private const val CHANNEL_ID = "sync"
         private const val NOTIFICATION_ID = 0x5c4c
         private val RATE_LIMIT_REASONS = setOf("rateLimitExceeded", "userRateLimitExceeded")
+        private val SCOPE_REASONS = setOf("insufficientPermissions", "ACCESS_TOKEN_SCOPE_INSUFFICIENT")
 
         private fun md5Hex(bytes: ByteArray): String {
             val digest = MessageDigest.getInstance("MD5").digest(bytes)
