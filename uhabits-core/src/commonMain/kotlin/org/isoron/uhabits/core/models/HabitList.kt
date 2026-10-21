@@ -131,6 +131,12 @@ abstract class HabitList : Iterable<Habit> {
     open fun repair() {}
 
     /**
+     * Runs the given block while holding the same lock used by the list's own operations, so
+     * that no other thread can add, update or remove habits in the meantime.
+     */
+    open fun <T> runLocked(block: () -> T): T = block()
+
+    /**
      * Returns the number of habits in this list.
      *
      * @return number of habits

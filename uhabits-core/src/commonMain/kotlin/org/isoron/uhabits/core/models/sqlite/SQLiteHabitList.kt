@@ -132,6 +132,9 @@ class SQLiteHabitList(private val modelFactory: ModelFactory) : HabitList() {
                 r.position = pos
                 repository.update(r)
             }
+            // Keep the habits in memory consistent with the database. Otherwise, a later
+            // reorder would use stale positions.
+            r.id?.let { list.getById(it) }?.position = pos
         }
     }
 
@@ -148,8 +151,7 @@ class SQLiteHabitList(private val modelFactory: ModelFactory) : HabitList() {
     @Synchronized
     override fun removeAll() {
         list.removeAll()
-        repository.execSQL("delete from habits")
-        repository.execSQL("delete from repetitions")
+        repository.deleteAll()
         observable.notifyListeners()
     }
 
@@ -173,6 +175,7 @@ class SQLiteHabitList(private val modelFactory: ModelFactory) : HabitList() {
         val data = copyFrom(from)
         data.position = toPos
         repository.update(data)
+        repository.markPositionsModified(minOf(fromPos, toPos), maxOf(fromPos, toPos))
         observable.notifyListeners()
     }
 
@@ -209,6 +212,9 @@ class SQLiteHabitList(private val modelFactory: ModelFactory) : HabitList() {
     fun reload() {
         loaded = false
     }
+
+    @Synchronized
+    override fun <T> runLocked(block: () -> T): T = block()
 
     companion object {
         fun copyFrom(habit: Habit): HabitData {

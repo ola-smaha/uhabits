@@ -5,6 +5,8 @@ import org.isoron.platform.io.PreparedStatement
 import org.isoron.platform.io.StepResult
 import org.isoron.platform.io.queryLong
 import org.isoron.platform.io.run
+import org.isoron.uhabits.core.sync.SyncClock
+import org.isoron.uhabits.core.sync.SyncSchema
 
 data class HabitData(
     var id: Long? = null,
@@ -28,6 +30,10 @@ data class HabitData(
 )
 
 class HabitRepository(private val db: Database) {
+    init {
+        SyncSchema.ensure(db)
+    }
+
     private val findAllStmt by lazy {
         db.prepareStatement(
             """SELECT id, name, description, question, freq_num, freq_den, color,
@@ -68,6 +74,22 @@ class HabitRepository(private val db: Database) {
         db.prepareStatement("DELETE FROM Habits WHERE id = ?")
     }
 
+    private val findUuidStmt by lazy {
+        db.prepareStatement("SELECT uuid FROM Habits WHERE id = ?")
+    }
+
+    private val stampStmt by lazy {
+        db.prepareStatement(SyncSchema.STAMP_HABIT_SQL)
+    }
+
+    private val tombstoneStmt by lazy {
+        db.prepareStatement(SyncSchema.TOMBSTONE_SQL)
+    }
+
+    private val deleteMetaStmt by lazy {
+        db.prepareStatement("DELETE FROM SyncHabitMeta WHERE uuid = ?")
+    }
+
     fun findAll(): List<HabitData> {
         findAllStmt.reset()
         val results = mutableListOf<HabitData>()
@@ -83,12 +105,15 @@ class HabitRepository(private val db: Database) {
             insertWithIdStmt.bindLong(1, data.id!!)
             bindForInsert(insertWithIdStmt, data, offset = 1)
             insertWithIdStmt.step()
+            markModified(data.uuid)
             return data.id!!
         }
         insertStmt.reset()
         bindForInsert(insertStmt, data)
         insertStmt.step()
-        return db.queryLong("SELECT last_insert_rowid()")
+        val id = db.queryLong("SELECT last_insert_rowid()")
+        markModified(data.uuid)
+        return id
     }
 
     fun update(data: HabitData) {
@@ -96,12 +121,67 @@ class HabitRepository(private val db: Database) {
         bindForInsert(updateStmt, data)
         updateStmt.bindLong(18, data.id!!)
         updateStmt.step()
+        markModified(data.uuid)
     }
 
     fun delete(id: Long) {
+        val uuid = findUuid(id)
         deleteStmt.reset()
         deleteStmt.bindLong(1, id)
         deleteStmt.step()
+        if (uuid != null) markDeleted(uuid)
+    }
+
+    /** Deletes all habits and entries, recording the deletions so that they reach other devices. */
+    fun deleteAll() {
+        db.run(
+            "INSERT OR REPLACE INTO SyncTombstones(uuid, deleted_at) " +
+                "SELECT h.uuid, MAX(?, COALESCE(m.last_modified, 0) + 1) " +
+                "FROM Habits h LEFT JOIN SyncHabitMeta m ON m.uuid = h.uuid " +
+                "WHERE h.uuid IS NOT NULL"
+        ) { bindLong(1, SyncClock.now()) }
+        db.run("DELETE FROM Habits")
+        db.run("DELETE FROM Repetitions")
+        db.run("DELETE FROM SyncHabitMeta")
+        db.run("DELETE FROM SyncEntryMeta")
+    }
+
+    /** Records that the habits whose positions lie in the given range were modified. */
+    fun markPositionsModified(fromPosition: Int, toPosition: Int) {
+        db.run(SyncSchema.STAMP_HABIT_POSITION_RANGE_SQL) {
+            bindLong(1, SyncClock.now())
+            bindInt(2, fromPosition)
+            bindInt(3, toPosition)
+        }
+    }
+
+    private fun findUuid(id: Long): String? {
+        findUuidStmt.reset()
+        findUuidStmt.bindLong(1, id)
+        val uuid = if (findUuidStmt.step() == StepResult.ROW) findUuidStmt.getTextOrNull(0) else null
+        findUuidStmt.reset()
+        return uuid
+    }
+
+    private fun markModified(uuid: String?) {
+        if (uuid == null) return
+        stampStmt.reset()
+        stampStmt.bindText(1, uuid)
+        stampStmt.bindLong(2, SyncClock.now())
+        stampStmt.bindText(3, uuid)
+        stampStmt.step()
+    }
+
+    private fun markDeleted(uuid: String) {
+        tombstoneStmt.reset()
+        tombstoneStmt.bindText(1, uuid)
+        tombstoneStmt.bindLong(2, SyncClock.now())
+        tombstoneStmt.bindText(3, uuid)
+        tombstoneStmt.bindText(4, uuid)
+        tombstoneStmt.step()
+        deleteMetaStmt.reset()
+        deleteMetaStmt.bindText(1, uuid)
+        deleteMetaStmt.step()
     }
 
     fun execSQL(sql: String) = db.run(sql)

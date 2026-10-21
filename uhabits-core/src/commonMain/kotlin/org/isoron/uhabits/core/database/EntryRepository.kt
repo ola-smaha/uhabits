@@ -4,6 +4,8 @@ import org.isoron.platform.io.Database
 import org.isoron.platform.io.StepResult
 import org.isoron.platform.io.queryLong
 import org.isoron.platform.io.run
+import org.isoron.uhabits.core.sync.SyncClock
+import org.isoron.uhabits.core.sync.SyncSchema
 
 data class EntryData(
     var id: Long? = null,
@@ -14,6 +16,10 @@ data class EntryData(
 )
 
 class EntryRepository(private val db: Database) {
+    init {
+        SyncSchema.ensure(db)
+    }
+
     private val findAllByHabitStmt by lazy {
         db.prepareStatement(
             "SELECT id, habit, timestamp, value, notes FROM Repetitions WHERE habit = ? ORDER BY timestamp DESC"
@@ -32,6 +38,14 @@ class EntryRepository(private val db: Database) {
 
     private val deleteByHabitStmt by lazy {
         db.prepareStatement("DELETE FROM Repetitions WHERE habit = ?")
+    }
+
+    private val stampStmt by lazy {
+        db.prepareStatement(SyncSchema.STAMP_ENTRY_SQL)
+    }
+
+    private val deleteMetaByHabitStmt by lazy {
+        db.prepareStatement("DELETE FROM SyncEntryMeta WHERE habit = ?")
     }
 
     fun findAllByHabitId(habitId: Long): List<EntryData> {
@@ -59,7 +73,15 @@ class EntryRepository(private val db: Database) {
         insertStmt.bindInt(3, data.value)
         insertStmt.bindText(4, data.notes)
         insertStmt.step()
-        return db.queryLong("SELECT last_insert_rowid()")
+        val id = db.queryLong("SELECT last_insert_rowid()")
+        stampStmt.reset()
+        stampStmt.bindLong(1, data.habitId!!)
+        stampStmt.bindLong(2, data.timestamp)
+        stampStmt.bindLong(3, SyncClock.now())
+        stampStmt.bindLong(4, data.habitId!!)
+        stampStmt.bindLong(5, data.timestamp)
+        stampStmt.step()
+        return id
     }
 
     fun deleteByHabitIdAndTimestamp(habitId: Long, timestamp: Long) {
@@ -73,6 +95,9 @@ class EntryRepository(private val db: Database) {
         deleteByHabitStmt.reset()
         deleteByHabitStmt.bindLong(1, habitId)
         deleteByHabitStmt.step()
+        deleteMetaByHabitStmt.reset()
+        deleteMetaByHabitStmt.bindLong(1, habitId)
+        deleteMetaByHabitStmt.step()
     }
 
     fun execSQL(sql: String) = db.run(sql)

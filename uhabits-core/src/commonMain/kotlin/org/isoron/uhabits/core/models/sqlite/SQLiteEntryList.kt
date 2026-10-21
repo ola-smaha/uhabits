@@ -19,6 +19,7 @@
 
 package org.isoron.uhabits.core.models.sqlite
 
+import org.isoron.platform.Synchronized
 import org.isoron.platform.time.LocalDate
 import org.isoron.uhabits.core.database.EntryData
 import org.isoron.uhabits.core.database.EntryRepository
@@ -79,5 +80,15 @@ class SQLiteEntryList(val repository: EntryRepository) : EntryList() {
     override fun clear() {
         super.clear()
         repository.deleteByHabitId(habitId!!)
+    }
+
+    /**
+     * Forgets the entries cached in memory, so that the next read loads them again from the
+     * database. Used after the database has been modified directly (for example, by sync).
+     */
+    @Synchronized
+    fun invalidate() {
+        super.clear()
+        isLoaded = false
     }
 }
