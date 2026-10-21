@@ -47,6 +47,7 @@ import org.isoron.uhabits.core.commands.CommandRunner
 import org.isoron.uhabits.core.commands.SyncAppliedCommand
 import org.isoron.uhabits.core.models.HabitList
 import org.isoron.uhabits.core.models.ModelFactory
+import org.isoron.uhabits.core.models.ModelObservable
 import org.isoron.uhabits.core.sync.DriveAppDataClient
 import org.isoron.uhabits.core.sync.SyncApplier
 import org.isoron.uhabits.core.sync.SyncMerger
@@ -97,13 +98,26 @@ class SyncManager(
     @Volatile
     private var pendingLocalChanges = false
 
+    /** True while remote changes are being written, so they don't count as local changes. */
+    @Volatile
+    private var applyingRemoteChanges = false
+
+    private val habitListListener = ModelObservable.Listener { onLocalChange() }
+
     fun start() {
         commandRunner.addListener(this)
+        // Some changes (reordering, imports) don't go through commands.
+        habitList.observable.addListener(habitListListener)
         if (prefs.enabled) SyncScheduler.schedulePeriodic(context)
     }
 
     override fun onCommandFinished(command: Command) {
-        if (command is SyncAppliedCommand || !prefs.enabled) return
+        if (command is SyncAppliedCommand) return
+        onLocalChange()
+    }
+
+    private fun onLocalChange() {
+        if (applyingRemoteChanges || !prefs.enabled) return
         pendingLocalChanges = true
         SyncScheduler.requestSync(context, SyncScheduler.CHANGE_DELAY_SECONDS)
     }
@@ -215,7 +229,12 @@ class SyncManager(
             for (file in files) {
                 remote = SyncMerger.merge(remote, readRemoteSnapshot(drive.download(file.id)))
             }
-            val result = applier.apply(remote)
+            val result = try {
+                applyingRemoteChanges = true
+                applier.apply(remote)
+            } finally {
+                applyingRemoteChanges = false
+            }
             if (result.changedAnything) announce(result)
             Log.i(
                 TAG,
