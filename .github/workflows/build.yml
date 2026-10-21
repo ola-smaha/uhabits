@@ -1,0 +1,84 @@
+name: Build APK
+
+on:
+  push:
+    branches: ["**"]
+    paths-ignore: ["**.md"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out source code
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run core tests
+        run: ./gradlew --no-daemon --stacktrace :uhabits-core:jvmTest
+
+      - name: Build release APK
+        env:
+          SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+        run: |
+          if [ -n "$SIGNING_KEYSTORE_BASE64" ]; then
+            echo "$SIGNING_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            export LOOP_KEY_STORE="$RUNNER_TEMP/release.jks"
+            export LOOP_KEY_ALIAS="$SIGNING_KEY_ALIAS"
+            export LOOP_KEY_PASSWORD="$SIGNING_KEY_PASSWORD"
+            export LOOP_STORE_PASSWORD="$SIGNING_STORE_PASSWORD"
+            echo "HAS_SIGNING_KEY=true" >> "$GITHUB_ENV"
+          else
+            echo "::warning::Signing secrets are not set, so the APK is unsigned and cannot be installed."
+          fi
+          ./gradlew --no-daemon --stacktrace :uhabits-android:assembleRelease
+          rm -f "$RUNNER_TEMP/release.jks"
+
+      - name: Collect APK
+        id: apk
+        run: |
+          VERSION=$(grep versionName uhabits-android/build.gradle.kts | sed -e 's/.*"\([^"]*\)".*/\1/')
+          NAME="LoopSync-${VERSION}-${{ github.run_number }}.apk"
+          mkdir -p dist
+          cp uhabits-android/build/outputs/apk/release/*.apk "dist/$NAME"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          ls -la dist
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: loop-sync-apk
+          path: dist/*.apk
+
+      - name: Publish release
+        if: github.ref == 'refs/heads/dev' && env.HAS_SIGNING_KEY == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.apk.outputs.tag }}
+          name: Loop Sync ${{ steps.apk.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          files: dist/${{ steps.apk.outputs.name }}
+          body: |
+            Install the APK on each device (same file on your phone and tablet).
+            Built from ${{ github.sha }}.

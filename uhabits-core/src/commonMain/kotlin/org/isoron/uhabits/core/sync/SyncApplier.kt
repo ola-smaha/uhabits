@@ -71,24 +71,55 @@ class SyncApplier(
      * upload the local database if [Result.localState] differs from [remote].
      */
     fun apply(remote: SyncSnapshot): Result {
-        val partial = habitList.runLocked { applyLocked(remote) }
+        // Step 1: habits are created, updated and deleted through the regular model (holding the
+        // list's lock), so that the in-memory list stays consistent with the database.
+        val habits = habitList.runLocked { applyHabits(remote) }
 
-        // Refresh caches and computed data outside the lock.
+        // Step 2: entries, positions and bookkeeping, written directly in one transaction.
+        val changes = applyEntries(remote, habits)
+
+        // Step 3: bring the habits in memory up to date.
+        var reordered = changes.reordered
+        habitList.runLocked {
+            for ((uuid, position) in changes.positions) {
+                val habit = habitList.getByUUID(uuid) ?: continue
+                if (habit.position != position) {
+                    habit.position = position
+                    reordered = true
+                }
+            }
+        }
+        val changedEntries = changes.changedEntryHabits.mapNotNull { habitList.getByUUID(it) }
         val refreshed = LinkedHashSet<Habit>()
-        refreshed.addAll(partial.createdHabits)
-        refreshed.addAll(partial.updatedHabits)
-        refreshed.addAll(partial.habitsWithChangedEntries)
+        refreshed.addAll(habits.created)
+        refreshed.addAll(habits.updated)
+        refreshed.addAll(changedEntries)
         for (habit in refreshed) {
             (habit.originalEntries as? SQLiteEntryList)?.invalidate()
             habit.recompute()
         }
-        if (partial.changedAnything) habitList.resort()
-        return partial
+
+        val result = Result(
+            localState = changes.localState,
+            createdHabits = habits.created,
+            updatedHabits = habits.updated,
+            deletedHabits = habits.deleted,
+            habitsWithChangedEntries = changedEntries,
+            reordered = reordered,
+            renumberedPositions = changes.renumbered
+        )
+        if (result.changedAnything) habitList.resort()
+        return result
     }
 
-    private fun applyLocked(remote: SyncSnapshot): Result {
-        // Step 1: habit-level changes, through the regular model, so that the in-memory list
-        // stays consistent with the database.
+    private class HabitChanges(
+        val merged: SyncSnapshot,
+        val created: List<Habit>,
+        val updated: List<Habit>,
+        val deleted: List<Habit>
+    )
+
+    private fun applyHabits(remote: SyncSnapshot): HabitChanges {
         val local = SyncSnapshotReader.read(db)
         val merged = SyncMerger.merge(local, remote)
 
@@ -117,15 +148,32 @@ class SyncApplier(
                 updated.add(existing)
             }
         }
+        return HabitChanges(merged, created, updated, deleted)
+    }
 
-        // Step 2: entries, positions and bookkeeping, in a single transaction. Entries are merged
-        // again against a fresh read, so that check-ins made while the merge was running are
-        // never overwritten.
+    private class EntryChanges(
+        val localState: SyncSnapshot,
+        val changedEntryHabits: Set<String>,
+        /** Position of each habit, by uuid. */
+        val positions: Map<String, Int>,
+        val reordered: Boolean,
+        val renumbered: Boolean
+    )
+
+    /**
+     * Writes entries, positions and sync bookkeeping in a single transaction. Entries are merged
+     * again against a fresh read, so that check-ins made while the merge was running are never
+     * overwritten. Nothing here touches the in-memory models: other threads may be holding
+     * their locks while waiting for the database.
+     */
+    private fun applyEntries(remote: SyncSnapshot, habits: HabitChanges): EntryChanges {
+        val merged = habits.merged
+        val deletedUuids = habits.deleted.mapNotNull { it.uuid }.toSet()
         val changedEntryHabits = LinkedHashSet<String>()
+        val positions = HashMap<String, Int>()
         var renumbered = false
         var reordered = false
         val localState: SyncSnapshot
-        val deletedUuids = deleted.mapNotNull { it.uuid }.toSet()
         db.begin()
         try {
             val current = SyncSnapshotReader.read(db)
@@ -140,7 +188,7 @@ class SyncApplier(
                     val habitId = ids[key.habitUuid] ?: continue
                     val l = current.entries[key]
                     if (l == null || !l.sameContentAs(m)) {
-                        st.deleteEntry(habitId, key.timestamp)
+                        if (l != null) st.deleteEntry(habitId, key.timestamp)
                         st.insertEntry(habitId, key.timestamp, m.value, m.notes)
                         st.stampEntry(habitId, key.timestamp, m.lastModified)
                         changedEntryHabits.add(key.habitUuid)
@@ -156,6 +204,7 @@ class SyncApplier(
                     .filter { it.uuid in ids }
                     .sortedWith(compareBy<SyncHabit>({ it.position }, { it.uuid }))
                 for ((index, m) in ordered.withIndex()) {
+                    positions[m.uuid] = index
                     val c = current.habits[m.uuid]
                     if (c == null || c.position != index) {
                         st.setPosition(m.uuid, index)
@@ -168,11 +217,6 @@ class SyncApplier(
                         maxOf(SyncClock.now(), m.lastModified + 1)
                     }
                     if (c == null || c.lastModified != stamp) st.stampHabit(m.uuid, stamp)
-                    val habit = habitList.getByUUID(m.uuid)
-                    if (habit != null && habit.position != index) {
-                        habit.position = index
-                        reordered = true
-                    }
                 }
 
                 for ((uuid, deletedAt) in mergedEntries.tombstones) {
@@ -185,17 +229,7 @@ class SyncApplier(
         } finally {
             db.commit()
         }
-
-        val changedEntries = changedEntryHabits.mapNotNull { habitList.getByUUID(it) }
-        return Result(
-            localState = localState,
-            createdHabits = created,
-            updatedHabits = updated,
-            deletedHabits = deleted,
-            habitsWithChangedEntries = changedEntries,
-            reordered = reordered,
-            renumberedPositions = renumbered
-        )
+        return EntryChanges(localState, changedEntryHabits, positions, reordered, renumbered)
     }
 
     private fun writeFields(m: SyncHabit, habit: Habit) {

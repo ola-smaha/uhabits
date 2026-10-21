@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ~ Copyright (C) 2026 Loop Habit Tracker contributors
+  ~
+  ~ This file is part of Loop Habit Tracker.
+  ~
+  ~ Loop Habit Tracker is free software: you can redistribute it and/or modify
+  ~ it under the terms of the GNU General Public License as published by the
+  ~ Free Software Foundation, either version 3 of the License, or (at your
+  ~ option) any later version.
+  ~
+  ~ Loop Habit Tracker is distributed in the hope that it will be useful, but
+  ~ WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+  ~ or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+  ~ more details.
+  ~
+  ~ You should have received a copy of the GNU General Public License along
+  ~ with this program. If not, see <http://www.gnu.org/licenses/>.
+  -->
+
+<resources>
+    <string name="fork_app_label" translatable="false">Loop Sync</string>
+
+    <string name="sync">Sync</string>
+    <string name="sync_google_drive">Sync with Google Drive</string>
+    <string name="sync_off_summary">Off. Tap to connect a Google account and keep this device in sync with your other devices.</string>
+    <string name="sync_on_summary">On · %1$s</string>
+    <string name="sync_on_account_summary">On · %1$s · %2$s</string>
+    <string name="sync_waiting_first_sync">waiting for the first sync</string>
+    <string name="sync_last_synced">synced %1$s</string>
+    <string name="sync_just_now">synced just now</string>
+    <string name="sync_failed_summary">Last sync failed: %1$s</string>
+    <string name="sync_reconnect_summary">Paused. Tap to reconnect your Google account.</string>
+    <string name="sync_now">Sync now</string>
+    <string name="sync_now_summary">Syncing also happens automatically after every change, when the app opens and every 15 minutes.</string>
+    <string name="sync_started">Syncing…</string>
+    <string name="sync_disconnect">Turn off sync</string>
+    <string name="sync_disconnect_summary">Stop syncing this device. Your data stays on this device and in Google Drive.</string>
+    <string name="sync_disconnected">Sync turned off</string>
+    <string name="sync_connected">Connected. Syncing now…</string>
+    <string name="sync_auth_failed">Could not connect to Google: %1$s</string>
+    <string name="sync_developer_error">Google rejected this app. Check that the package name and SHA-1 fingerprint registered in Google Cloud match this app.</string>
+    <string name="sync_network_error">No connection to Google. Try again when you are online.</string>
+    <string name="sync_cancelled">Cancelled</string>
+    <string name="sync_newer_version">The data in Google Drive was saved by a newer version of the app. Update the app on this device.</string>
+    <string name="sync_reconnect_title">Sync is paused</string>
+    <string name="sync_reconnect_text">Tap to reconnect your Google account.</string>
+</resources>

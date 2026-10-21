@@ -21,6 +21,30 @@
         xmlns:app="http://schemas.android.com/apk/res-auto">
 
     <PreferenceCategory
+            android:key="syncCategory"
+            android:title="@string/sync">
+
+        <Preference
+                android:key="syncGoogleDrive"
+                android:title="@string/sync_google_drive"
+                android:summary="@string/sync_off_summary"
+                app:iconSpaceReserved="false" />
+
+        <Preference
+                android:key="syncNow"
+                android:title="@string/sync_now"
+                android:summary="@string/sync_now_summary"
+                app:iconSpaceReserved="false" />
+
+        <Preference
+                android:key="syncDisconnect"
+                android:title="@string/sync_disconnect"
+                android:summary="@string/sync_disconnect_summary"
+                app:iconSpaceReserved="false" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory
             android:key="interfaceCategory"
             android:title="@string/interface_preferences">
 
@@ -179,13 +203,9 @@
         </Preference>
 
         <Preference
+                android:key="about"
                 android:title="@string/about"
-                app:iconSpaceReserved="false">
-            <intent
-                    android:action="android.intent.action.VIEW"
-                    android:targetClass="org.isoron.uhabits.activities.about.AboutActivity"
-                    android:targetPackage="org.isoron.uhabits" />
-        </Preference>
+                app:iconSpaceReserved="false" />
 
     </PreferenceCategory>
 

@@ -86,6 +86,8 @@ class HabitsApplication : Application() {
         notificationTray = component.notificationTray
         notificationTray.startListening()
 
+        component.syncManager.start()
+
         val taskRunner = component.taskRunner
         taskRunner.execute {
             reminderScheduler.scheduleAll()

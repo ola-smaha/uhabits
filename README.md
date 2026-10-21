@@ -1,3 +1,6 @@
+> **This fork adds automatic sync between devices through Google Drive.**
+> See [SYNC.md](SYNC.md) for setup and installation.
+
 <h1 align="center">Loop Habit Tracker</h1>
 <p align="center">
   <a href="https://github.com/iSoron/uhabits/releases/latest">

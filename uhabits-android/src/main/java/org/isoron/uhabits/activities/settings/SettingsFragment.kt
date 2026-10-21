@@ -18,6 +18,7 @@
  */
 package org.isoron.uhabits.activities.settings
 
+import android.app.Activity
 import android.app.backup.BackupManager
 import android.content.Intent
 import android.content.SharedPreferences
@@ -27,19 +28,26 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.DocumentsContract
 import android.provider.Settings
+import android.text.format.DateUtils
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Toast
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.preference.ListPreference
 import androidx.preference.Preference
 import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceFragmentCompat
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.gms.auth.api.identity.Identity
+import com.google.android.gms.common.api.ApiException
 import org.isoron.platform.time.DayOfWeek
 import org.isoron.platform.time.JavaLocalDateFormatter
 import org.isoron.uhabits.HabitsApplication
 import org.isoron.uhabits.R
+import org.isoron.uhabits.activities.about.AboutActivity
 import org.isoron.uhabits.activities.habits.list.RESULT_BUG_REPORT
 import org.isoron.uhabits.activities.habits.list.RESULT_EXPORT_CSV
 import org.isoron.uhabits.activities.habits.list.RESULT_EXPORT_DB
@@ -49,6 +57,8 @@ import org.isoron.uhabits.core.preferences.Preferences
 import org.isoron.uhabits.core.ui.NotificationTray
 import org.isoron.uhabits.notifications.AndroidNotificationTray.Companion.createAndroidNotificationChannel
 import org.isoron.uhabits.notifications.RingtoneManager
+import org.isoron.uhabits.sync.GoogleDriveAuth
+import org.isoron.uhabits.sync.SyncManager
 import org.isoron.uhabits.utils.StyledResources
 import org.isoron.uhabits.utils.applyBottomInset
 import org.isoron.uhabits.utils.startActivitySafely
@@ -60,6 +70,15 @@ class SettingsFragment : PreferenceFragmentCompat(), OnSharedPreferenceChangeLis
     private var ringtoneManager: RingtoneManager? = null
     private lateinit var prefs: Preferences
     private var widgetUpdater: WidgetUpdater? = null
+    private var syncManager: SyncManager? = null
+
+    private val syncPrefsListener =
+        SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> updateSyncPreferences() }
+
+    private val authorizationLauncher =
+        registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+            onAuthorizationResult(result.resultCode, result.data)
+        }
 
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -89,6 +108,7 @@ class SettingsFragment : PreferenceFragmentCompat(), OnSharedPreferenceChangeLis
         if (appContext is HabitsApplication) {
             prefs = appContext.component.preferences
             widgetUpdater = appContext.component.widgetUpdater
+            syncManager = appContext.component.syncManager
         }
         setResultOnPreferenceClick("importData", RESULT_IMPORT_DATA)
         setResultOnPreferenceClick("exportCSV", RESULT_EXPORT_CSV)
@@ -103,6 +123,7 @@ class SettingsFragment : PreferenceFragmentCompat(), OnSharedPreferenceChangeLis
 
     override fun onPause() {
         sharedPrefs!!.unregisterOnSharedPreferenceChangeListener(this)
+        syncManager?.prefs?.prefs?.unregisterOnSharedPreferenceChangeListener(syncPrefsListener)
         super.onPause()
     }
 
@@ -141,6 +162,31 @@ class SettingsFragment : PreferenceFragmentCompat(), OnSharedPreferenceChangeLis
                 activity?.startActivitySafely(intent)
                 return true
             }
+            "syncGoogleDrive" -> {
+                val manager = syncManager ?: return true
+                if (!manager.prefs.enabled || manager.prefs.needsAuth) {
+                    connectGoogleDrive()
+                } else {
+                    manager.requestSyncNow()
+                    showToast(getString(R.string.sync_started))
+                }
+                return true
+            }
+            "syncNow" -> {
+                syncManager?.requestSyncNow()
+                showToast(getString(R.string.sync_started))
+                return true
+            }
+            "syncDisconnect" -> {
+                syncManager?.disable()
+                updateSyncPreferences()
+                showToast(getString(R.string.sync_disconnected))
+                return true
+            }
+            "about" -> {
+                startActivity(Intent(requireContext(), AboutActivity::class.java))
+                return true
+            }
             "publicBackupFolder" -> {
                 val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
                 intent.addFlags(
@@ -166,8 +212,94 @@ class SettingsFragment : PreferenceFragmentCompat(), OnSharedPreferenceChangeLis
         }
         updateWeekdayPreference()
         updatePublicBackupFolderSummary()
+        syncManager?.prefs?.prefs?.registerOnSharedPreferenceChangeListener(syncPrefsListener)
+        updateSyncPreferences()
 
         findPreference("reminderSound").isVisible = false
+    }
+
+    private fun connectGoogleDrive() {
+        val activity = requireActivity()
+        GoogleDriveAuth.authorize(activity)
+            .addOnSuccessListener { result ->
+                if (!isAdded) return@addOnSuccessListener
+                val pendingIntent = result.pendingIntent
+                if (result.hasResolution() && pendingIntent != null) {
+                    authorizationLauncher.launch(
+                        IntentSenderRequest.Builder(pendingIntent.intentSender).build()
+                    )
+                } else {
+                    onAuthorized()
+                }
+            }
+            .addOnFailureListener { e ->
+                if (!isAdded) return@addOnFailureListener
+                showToast(getString(R.string.sync_auth_failed, GoogleDriveAuth.describe(activity, e)))
+            }
+    }
+
+    private fun onAuthorizationResult(resultCode: Int, data: Intent?) {
+        if (resultCode != Activity.RESULT_OK || data == null) {
+            showToast(getString(R.string.sync_cancelled))
+            return
+        }
+        try {
+            val result = Identity.getAuthorizationClient(requireActivity())
+                .getAuthorizationResultFromIntent(data)
+            if (result.accessToken == null) {
+                showToast(getString(R.string.sync_cancelled))
+                return
+            }
+            onAuthorized()
+        } catch (e: ApiException) {
+            showToast(getString(R.string.sync_auth_failed, GoogleDriveAuth.describe(requireContext(), e)))
+        }
+    }
+
+    private fun onAuthorized() {
+        syncManager?.enable()
+        updateSyncPreferences()
+        showToast(getString(R.string.sync_connected))
+    }
+
+    private fun updateSyncPreferences() {
+        if (!isAdded) return
+        val manager = syncManager ?: return
+        val syncPrefs = manager.prefs
+        val enabled = syncPrefs.enabled
+        val syncNow: Preference? = findPreference("syncNow")
+        val syncDisconnect: Preference? = findPreference("syncDisconnect")
+        val main: Preference = findPreference("syncGoogleDrive") ?: return
+        syncNow?.isVisible = enabled
+        syncDisconnect?.isVisible = enabled
+        val lastError = syncPrefs.lastError
+        main.summary = when {
+            !enabled -> getString(R.string.sync_off_summary)
+            syncPrefs.needsAuth -> getString(R.string.sync_reconnect_summary)
+            lastError != null -> getString(R.string.sync_failed_summary, lastError)
+            else -> {
+                val lastSuccess = syncPrefs.lastSuccess
+                val now = System.currentTimeMillis()
+                val status = when {
+                    lastSuccess == 0L -> getString(R.string.sync_waiting_first_sync)
+                    now - lastSuccess < DateUtils.MINUTE_IN_MILLIS -> getString(R.string.sync_just_now)
+                    else -> getString(
+                        R.string.sync_last_synced,
+                        DateUtils.getRelativeTimeSpanString(lastSuccess, now, DateUtils.MINUTE_IN_MILLIS)
+                    )
+                }
+                val email = syncPrefs.accountEmail
+                if (email != null) {
+                    getString(R.string.sync_on_account_summary, email, status)
+                } else {
+                    getString(R.string.sync_on_summary, status)
+                }
+            }
+        }
+    }
+
+    private fun showToast(message: String) {
+        context?.let { Toast.makeText(it, message, Toast.LENGTH_LONG).show() }
     }
 
     private fun updateWeekdayPreference() {
@@ -189,7 +321,7 @@ class SettingsFragment : PreferenceFragmentCompat(), OnSharedPreferenceChangeLis
             Log.d("SettingsFragment", "updating widgets")
             widgetUpdater!!.updateWidgets()
         }
-        BackupManager.dataChanged("org.isoron.uhabits")
+        BackupManager.dataChanged(requireContext().packageName)
         updateWeekdayPreference()
     }
 

@@ -52,10 +52,11 @@ android {
 
     defaultConfig {
         versionCode = 20302
-        versionName = "2.3.2"
+        versionName = "2.3.2-sync"
         minSdk = 28
         targetSdk = 36
-        applicationId = "org.isoron.uhabits"
+        // A separate app id, so this fork can be installed next to the original app.
+        applicationId = "org.isoron.uhabits.sync"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -123,6 +124,8 @@ dependencies {
     implementation(libs.legacy.support.v4)
     implementation(libs.material)
     implementation(libs.documentfile)
+    implementation(libs.play.services.auth)
+    implementation(libs.work.runtime.ktx)
     implementation(libs.opencsv)
     implementation(libs.konfetti.xml)
     implementation(project(":uhabits-core"))

@@ -148,6 +148,7 @@ class ListHabitsActivity : AppCompatActivity(), Preferences.Listener {
             restartWithFade(ListHabitsActivity::class.java)
         }
         parseIntents()
+        appComponent.syncManager.onAppOpened()
         super.onResume()
     }
 
